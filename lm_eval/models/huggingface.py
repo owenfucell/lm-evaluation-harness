@@ -37,6 +37,13 @@ from lm_eval.models.utils import (
     stop_sequences_criteria,
 )
 
+from lm_eval.models.utils.noise_injection import (
+    add_noise_hooks, 
+    remove_noise_hooks, 
+    set_noise_level, 
+    get_noise_level
+)
+
 
 eval_logger = utils.eval_logger
 
@@ -65,6 +72,72 @@ def _get_accelerate_args(
     args["offload_folder"] = offload_folder
     return args
 
+def _setup_noise_injection(self):
+        """
+        设置噪声注入钩子
+        """
+        # 设置噪声水平
+        set_noise_level(self.noise_level)
+        
+        # 添加噪声钩子
+        self.noise_hooks = add_noise_hooks(self.model)
+        
+        if self.noise_hooks:
+            eval_logger.info(f"✅ 已添加{len(self.noise_hooks)}个噪声注入钩子，噪声水平: {self.noise_level}")
+        else:
+            eval_logger.warning("⚠️ 未能添加任何噪声钩子，请检查模型结构")
+    
+    def set_noise_level(self, level: float) -> float:
+        """
+        调整噪声水平
+        
+        Args:
+            level: 新的噪声水平 (0.0-1.0)
+            
+        Returns:
+            设置后的噪声水平
+        """
+        old_level = self.noise_level
+        self.noise_level = level
+        current_level = set_noise_level(level)
+        
+        # 如果之前没有钩子但现在有噪声水平，添加钩子
+        if not self.noise_hooks and self.noise_level > 0:
+            self._setup_noise_injection()
+        # 如果之前有钩子但现在噪声水平为0，移除钩子
+        elif self.noise_hooks and self.noise_level == 0:
+            self.remove_noise()
+            
+        eval_logger.info(f"噪声水平从 {old_level} 更改为 {self.noise_level}")
+        return current_level
+    
+    def get_noise_level(self) -> float:
+        """
+        获取当前噪声水平
+        
+        Returns:
+            当前噪声水平
+        """
+        return get_noise_level()
+    
+    def remove_noise(self):
+        """
+        移除所有噪声钩子
+        """
+        if self.noise_hooks:
+            remove_noise_hooks(self.noise_hooks)
+            eval_logger.info(f"🧹 已移除{len(self.noise_hooks)}个噪声钩子")
+            self.noise_hooks = []
+            set_noise_level(0.0)
+    
+    def __del__(self):
+        """
+        确保在对象销毁时清理钩子
+        """
+        try:
+            self.remove_noise()
+        except:
+            pass
 
 @register_model("hf-auto", "hf", "huggingface")
 class HFLM(TemplateLM):
@@ -114,6 +187,7 @@ class HFLM(TemplateLM):
         peft: Optional[str] = None,
         delta: Optional[str] = None,
         autogptq: Optional[Union[bool, str]] = False,
+        noise_level: Optional[float] = 0.0,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -344,6 +418,12 @@ class HFLM(TemplateLM):
             eval_logger.info(
                 f"Loglikelihood prefix token id used in evaluation: {self.prefix_token_id}"
             )
+        self.noise_level = noise_level
+        self.noise_hooks = []
+        
+        # 如果指定了噪声水平，添加噪声钩子
+        if isinstance(pretrained, str) and self.model is not None and self.noise_level > 0:
+            self._setup_noise_injection()
 
     @property
     def config(self):
@@ -357,6 +437,7 @@ class HFLM(TemplateLM):
             return self.accelerator.unwrap_model(self._model)
         else:
             return self._model
+    
 
     @property
     def eot_token_id(self):
@@ -1375,9 +1456,77 @@ class HFLM(TemplateLM):
             "model_dtype": get_model_dtype(self._model),
             "model_revision": self.revision,
             "model_sha": get_model_sha(self.pretrained, self.revision),
+            "noise_level": self.noise_level,
         }
         if self.peft:
             model_info["peft_sha"] = get_model_sha(self.peft, self.revision)
         if self.delta:
             model_info["delta_sha"] = get_model_sha(self.delta, self.revision)
         return model_info
+
+    def _setup_noise_injection(self):
+        """
+        设置噪声注入钩子
+        """
+        # 设置噪声水平
+        set_noise_level(self.noise_level)
+        
+        # 添加噪声钩子
+        self.noise_hooks = add_noise_hooks(self.model)
+        
+        if self.noise_hooks:
+            eval_logger.info(f"✅ 已添加{len(self.noise_hooks)}个噪声注入钩子，噪声水平: {self.noise_level}")
+        else:
+            eval_logger.warning("⚠️ 未能添加任何噪声钩子，请检查模型结构")
+    
+    def set_noise_level(self, level: float) -> float:
+        """
+        调整噪声水平
+        
+        Args:
+            level: 新的噪声水平 (0.0-1.0)
+            
+        Returns:
+            设置后的噪声水平
+        """
+        old_level = self.noise_level
+        self.noise_level = level
+        current_level = set_noise_level(level)
+        
+        # 如果之前没有钩子但现在有噪声水平，添加钩子
+        if not self.noise_hooks and self.noise_level > 0:
+            self._setup_noise_injection()
+        # 如果之前有钩子但现在噪声水平为0，移除钩子
+        elif self.noise_hooks and self.noise_level == 0:
+            self.remove_noise()
+            
+        eval_logger.info(f"噪声水平从 {old_level} 更改为 {self.noise_level}")
+        return current_level
+    
+    def get_noise_level(self) -> float:
+        """
+        获取当前噪声水平
+        
+        Returns:
+            当前噪声水平
+        """
+        return get_noise_level()
+    
+    def remove_noise(self):
+        """
+        移除所有噪声钩子
+        """
+        if self.noise_hooks:
+            remove_noise_hooks(self.noise_hooks)
+            eval_logger.info(f"🧹 已移除{len(self.noise_hooks)}个噪声钩子")
+            self.noise_hooks = []
+            set_noise_level(0.0)
+    
+    def __del__(self):
+        """
+        确保在对象销毁时清理钩子
+        """
+        try:
+            self.remove_noise()
+        except:
+            pass

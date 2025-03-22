@@ -229,6 +229,12 @@ def setup_parser() -> argparse.ArgumentParser:
         default=False,
         help="Use with --log_samples. Only model outputs will be saved and metrics will not be evaluated.",
     )
+    parser.add_argument(
+        "--noise_level", 
+        type=float, 
+        default=0.0,
+        help="Set the noise injection level (0.0-1.0) to test model robustness"
+    )
     default_seed_string = "0,1234,1234,1234"
     parser.add_argument(
         "--seed",
@@ -367,6 +373,12 @@ def cli_evaluate(args: Union[argparse.Namespace, None] = None) -> None:
         args.model_args = args.model_args + ",trust_remote_code=True"
 
     eval_logger.info(f"Selected Tasks: {task_names}")
+    if args.noise_level > 0:
+        eval_logger.info(f"Enabling noise injection with level: {args.noise_level}")
+        if args.model_args:
+            args.model_args = args.model_args + f",noise_level={args.noise_level}"
+        else:
+            args.model_args = f"noise_level={args.noise_level}"
 
     request_caching_args = request_caching_arg_to_dict(
         cache_requests=args.cache_requests
